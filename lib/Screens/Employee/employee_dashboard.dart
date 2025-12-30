@@ -1,31 +1,30 @@
+```dart
 import 'package:flutter/material.dart';
 
-class EmployeeDashboard extends StatefulWidget {
-  @override
-  _EmployeeDashboardState createState() => _EmployeeDashboardState();
-}
+class EmployeeDashboard extends StatelessWidget {
+  const EmployeeDashboard({Key? key}) : super(key: key);
 
-class _EmployeeDashboardState extends State<EmployeeDashboard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Employee Dashboard'),
+        title: const Text('Employee Dashboard'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () {
+              Navigator.of(context).pushReplacementNamed('/login');
+            },
+          ),
+        ],
       ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text('Welcome to the Employee Dashboard!'),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => TestScreen()),
-                );
-              },
-              child: Text('Go to Test Screen'),
+          children: const [
+            Text(
+              'Welcome to the Employee Dashboard',
+              style: TextStyle(fontSize: 18),
             ),
           ],
         ),
@@ -33,17 +32,4 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     );
   }
 }
-
-class TestScreen extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Test Screen'),
-      ),
-      body: Center(
-        child: Text('This is the Test Screen!'),
-      ),
-    );
-  }
-}
+```
