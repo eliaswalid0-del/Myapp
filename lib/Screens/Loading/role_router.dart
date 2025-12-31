@@ -11,49 +11,72 @@ import 'loading_screen.dart';
 class RoleRouter extends StatelessWidget {
   const RoleRouter({super.key});
 
-  Future<String?> _getUserRole() async {
+  Future<String> _getUserRole() async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return null;
+    if (user == null) return 'employee'; // Default fallback
 
-    final doc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
 
-    return doc.data()?['role'];
+      if (doc.exists) {
+        String? role = doc.data()?['role'];
+        
+        // If no role found, default to employee and update the document
+        if (role == null || role.isEmpty) {
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'email': user.email,
+            'role': 'employee',
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+          return 'employee';
+        }
+        
+        return role;
+      } else {
+        // User document doesn't exist, create it with employee role
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'email': user.email,
+          'role': 'employee',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        return 'employee';
+      }
+    } catch (e) {
+      print('Error getting user role: $e');
+      return 'employee'; // Default fallback on error
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<String?>(
+    return FutureBuilder<String>(
       future: _getUserRole(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const LoadingScreen();
         }
 
-        if (!snapshot.hasData) {
-          return const Center(child: Text("Role not found"));
+        if (snapshot.hasError) {
+          return const Center(child: Text("Error loading user data"));
         }
 
-        final role = snapshot.data;
-        if (role == null) {
-          return const Center(child: Text("Role not found"));
-        }
-
+        final role = snapshot.data ?? 'employee'; // Default fallback
         final normalized = role.toLowerCase();
 
         switch (normalized) {
           case "admin":
-            return AdminDashboard();
+            return const AdminDashboard();
           case "manager":
-            return ManagerDashboard();
+            return const ManagerDashboard();
           case "ops_manager":
-            return OpsManagerDashboard();
+            return const OpsManagerDashboard();
           case "employee":
-            return EmployeeDashboard();
+            return const EmployeeDashboard();
           default:
-            return const Center(child: Text("Unknown role"));
+            return const EmployeeDashboard(); // Default fallback
         }
       },
     );
