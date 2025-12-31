@@ -18,6 +18,11 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
   final TextEditingController joiningDateController = TextEditingController();
   final TextEditingController positionController = TextEditingController();
   bool isJoiningDateSet = false; // Track if joining date is already set
+  String? profilePhotoName; // Employee photo
+  
+  // Notifications
+  int unreadMemoCount = 0;
+  List<Map<String, dynamic>> memos = [];
   
   // Attendance data
   bool isClockedIn = false;
@@ -64,6 +69,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _loadUserData();
+    _loadMemos();
     _checkLocationPermission();
     _loadScheduleData();
   }
@@ -90,6 +96,204 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
     return 'User';
   }
 
+  Future<void> _loadMemos() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        final querySnapshot = await FirebaseFirestore.instance
+            .collection('memos')
+            .where('targetAudience', whereIn: ['all', 'employees'])
+            .orderBy('timestamp', descending: true)
+            .get();
+
+        setState(() {
+          memos = querySnapshot.docs.map((doc) {
+            final data = doc.data();
+            return {
+              'id': doc.id,
+              'title': data['title'],
+              'content': data['content'],
+              'from': data['from'],
+              'timestamp': data['timestamp']?.toDate().toString().split(' ')[0] ?? 'Unknown',
+              'isRead': data['readBy']?.contains(user.uid) ?? false,
+            };
+          }).toList();
+
+          // Count unread memos
+          unreadMemoCount = memos.where((memo) => !memo['isRead']).length;
+        });
+      } catch (e) {
+        print('Error loading memos: $e');
+      }
+    }
+  }
+
+  Future<void> _createSampleMemos() async {
+    try {
+      // Sample memo 1
+      await FirebaseFirestore.instance.collection('memos').add({
+        'title': 'Welcome to HQSync!',
+        'content': 'Please update your profile and upload all required documents by end of week.',
+        'from': 'Manager',
+        'timestamp': FieldValue.serverTimestamp(),
+        'targetAudience': 'employees',
+        'readBy': [],
+      });
+
+      // Sample memo 2  
+      await FirebaseFirestore.instance.collection('memos').add({
+        'title': 'New Break Policy',
+        'content': 'Reminder: Break time is limited to 1 hour per day. Please clock out properly.',
+        'from': 'Ops Manager',
+        'timestamp': FieldValue.serverTimestamp(),
+        'targetAudience': 'all',
+        'readBy': [],
+      });
+
+      // Sample memo 3
+      await FirebaseFirestore.instance.collection('memos').add({
+        'title': 'Document Expiry Alert',
+        'content': 'Several employees have documents expiring soon. Please check your profile and renew them.',
+        'from': 'HR Manager',
+        'timestamp': FieldValue.serverTimestamp(),
+        'targetAudience': 'employees',
+        'readBy': [],
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sample memos created successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Refresh memos to show them
+      _loadMemos();
+    } catch (e) {
+      print('Error creating memos: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error creating memos: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _showNotifications() async {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Notifications'),
+        content: Container(
+          width: double.maxFinite,
+          height: 300,
+          child: ListView.builder(
+            itemCount: memos.length,
+            itemBuilder: (context, index) {
+              final memo = memos[index];
+              return Card(
+                color: memo['isRead'] ? Colors.grey.shade100 : Colors.blue.shade50,
+                child: ListTile(
+                  title: Text(
+                    memo['title'],
+                    style: TextStyle(
+                      fontWeight: memo['isRead'] ? FontWeight.normal : FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: Text('From: ${memo['from']}\nDate: ${memo['timestamp']}'),
+                  onTap: () {
+                    _markMemoAsRead(memo['id']);
+                    _showMemoDetails(memo);
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _markMemoAsRead(String memoId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('memos')
+            .doc(memoId)
+            .update({
+          'readBy': FieldValue.arrayUnion([user.uid]),
+        });
+        _loadMemos(); // Refresh memos
+      } catch (e) {
+        print('Error marking memo as read: $e');
+      }
+    }
+  }
+
+  void _showMemoDetails(Map<String, dynamic> memo) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(memo['title']),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('From: ${memo['from']}'),
+              Text('Date: ${memo['timestamp']}'),
+              const SizedBox(height: 10),
+              Text(memo['content']),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _uploadProfilePhoto() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'png', 'jpeg'],
+      );
+
+      if (result != null) {
+        setState(() {
+          profilePhotoName = result.files.single.name;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Profile photo ${result.files.single.name} uploaded successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Photo upload failed: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   Future<void> _loadUserData() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
@@ -104,6 +308,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
           setState(() {
             joiningDateController.text = data['joiningDate'] ?? '';
             positionController.text = data['position'] ?? '';
+            profilePhotoName = data['profilePhoto'];
             isJoiningDateSet = data['joiningDate'] != null && data['joiningDate'].isNotEmpty;
             restaurantLat = data['restaurantLat'];
             restaurantLng = data['restaurantLng'];
@@ -139,6 +344,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
             .set({
           'joiningDate': joiningDateController.text,
           'position': positionController.text,
+          'profilePhoto': profilePhotoName,
           'documents': uploadedFiles,
           'restaurantLat': restaurantLat,
           'restaurantLng': restaurantLng,
@@ -620,6 +826,44 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
     }
   }
 
+  void _editDocument(String documentType) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit ${documentType.toUpperCase()}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Current file: ${uploadedFiles[documentType]!['file'] ?? 'None'}'),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                uploadFile(documentType);
+              },
+              child: const Text('Replace File'),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  uploadedFiles[documentType] = {'file': null, 'expiry': null, 'isExpiring': false};
+                });
+                Navigator.pop(context);
+              },
+              child: const Text('Remove File', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget buildEditableField(String label, TextEditingController controller, {bool readonly = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -723,6 +967,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
                       ),
                     ),
                   ),
+                  // Upload button
                   IconButton(
                     icon: Icon(
                       Icons.upload_file, 
@@ -730,6 +975,15 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
                       color: isExpiring ? Colors.red : Colors.blue
                     ),
                     onPressed: () => uploadFile(documentType),
+                  ),
+                  // Edit button
+                  IconButton(
+                    icon: const Icon(
+                      Icons.edit, 
+                      size: 18, 
+                      color: Colors.orange
+                    ),
+                    onPressed: () => _editDocument(documentType),
                   ),
                 ],
               ),
@@ -758,18 +1012,95 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
           ),
           const SizedBox(height: 20),
           
+          // Profile Photo Section
+          Center(
+            child: Column(
+              children: [
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.grey.shade200,
+                    border: Border.all(color: Colors.blue, width: 2),
+                  ),
+                  child: profilePhotoName != null
+                      ? ClipOval(
+                          child: Icon(
+                            Icons.person,
+                            size: 60,
+                            color: Colors.grey.shade600,
+                          ),
+                        )
+                      : Icon(
+                          Icons.person,
+                          size: 60,
+                          color: Colors.grey.shade600,
+                        ),
+                ),
+                const SizedBox(height: 10),
+                ElevatedButton.icon(
+                  onPressed: _uploadProfilePhoto,
+                  icon: const Icon(Icons.camera_alt),
+                  label: Text(profilePhotoName != null ? 'Change Photo' : 'Upload Photo'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                if (profilePhotoName != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: Text(
+                      profilePhotoName!,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 30),
+          
           // Basic Info
           buildEditableField('Joining Date', joiningDateController, readonly: isJoiningDateSet),
           buildEditableField('Position', positionController),
           
-          const SizedBox(height: 20),
+          const SizedBox(height: 30),
           
-          // Documents
-          const Text(
-            'Documents',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          // Documents Section with Gradient Background
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Color(0xFF80E5FF), // Light cyan
+                  Color(0xFF90EE90), // Light green
+                ],
+              ),
+              borderRadius: BorderRadius.all(Radius.circular(10)),
+            ),
+            child: const Text(
+              'Documents',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                shadows: [
+                  Shadow(
+                    offset: Offset(1.0, 1.0),
+                    blurRadius: 2.0,
+                    color: Color.fromARGB(128, 0, 0, 0),
+                  ),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 15),
           
           ...uploadedFiles.keys.map((docType) {
             String displayName = docType == 'eid' ? 'EID' :
@@ -821,6 +1152,26 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
               ),
               child: const Text(
                 'Save Profile',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 15),
+          
+          // Test Memos Button (Remove after testing)
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _createSampleMemos,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text(
+                'Create Test Memos (Remove Later)',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ),
@@ -1381,11 +1732,49 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
                         ],
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.logout, color: Colors.white),
-                      onPressed: () {
-                        FirebaseAuth.instance.signOut();
-                      },
+                    Row(
+                      children: [
+                        // Notifications Button
+                        Stack(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.notifications, color: Colors.white),
+                              onPressed: _showNotifications,
+                            ),
+                            if (unreadMemoCount > 0)
+                              Positioned(
+                                right: 8,
+                                top: 8,
+                                child: Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  constraints: const BoxConstraints(
+                                    minWidth: 16,
+                                    minHeight: 16,
+                                  ),
+                                  child: Text(
+                                    '$unreadMemoCount',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        // Logout Button
+                        IconButton(
+                          icon: const Icon(Icons.logout, color: Colors.white),
+                          onPressed: () {
+                            FirebaseAuth.instance.signOut();
+                          },
+                        ),
+                      ],
                     ),
                   ],
                 ),
