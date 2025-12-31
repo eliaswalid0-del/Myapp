@@ -36,6 +36,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
   
   // Leave data
   double annualLeaveBalance = 0.0;
+  double totalAccumulatedLeave = 0.0; // For display purposes
+  double totalUsedLeave = 0.0; // For display purposes
   int publicHolidayDays = 0;
   List<Map<String, dynamic>> leaveHistory = [];
   final TextEditingController leaveFromController = TextEditingController();
@@ -64,7 +66,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
     _loadUserData();
     _checkLocationPermission();
     _loadScheduleData();
-    _calculateLeaveBalance();
   }
 
   @override
@@ -118,6 +119,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
               });
             }
           });
+          
+          // Calculate leave balance after loading joining date
+          await _calculateLeaveBalance();
         }
       } catch (e) {
         print('Error loading user data: $e');
@@ -154,7 +158,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
           });
         }
 
-        _calculateLeaveBalance();
+        // Recalculate leave balance after saving joining date
+        await _calculateLeaveBalance();
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -166,18 +171,99 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
     }
   }
 
-  void _calculateLeaveBalance() {
+  Future<void> _calculateLeaveBalance() async {
     if (joiningDateController.text.isNotEmpty) {
       try {
         DateTime joiningDate = DateTime.parse(joiningDateController.text);
         DateTime now = DateTime.now();
+        
+        // Calculate complete months from joining date to today
         int monthsWorked = (now.year - joiningDate.year) * 12 + now.month - joiningDate.month;
+        
+        // If current day is before joining day in the month, subtract 1 month
+        if (now.day < joiningDate.day) {
+          monthsWorked--;
+        }
+        
+        // Ensure non-negative months
+        monthsWorked = monthsWorked < 0 ? 0 : monthsWorked;
+        
+        // Calculate total accumulated leave (2.5 days per month)
+        double totalAccumulated = monthsWorked * 2.5;
+        
+        // Fetch used leave days from Firebase
+        double usedLeaveDays = await _getUsedLeaveDays();
+        
         setState(() {
-          annualLeaveBalance = monthsWorked * 2.5;
+          totalAccumulatedLeave = totalAccumulated;
+          totalUsedLeave = usedLeaveDays;
+          annualLeaveBalance = totalAccumulated - usedLeaveDays;
+          // Ensure balance doesn't go negative
+          if (annualLeaveBalance < 0) {
+            annualLeaveBalance = 0;
+          }
         });
+        
+        print('Months worked: $monthsWorked, Total accumulated: $totalAccumulated, Used: $usedLeaveDays, Available: $annualLeaveBalance');
       } catch (e) {
-        print('Error parsing joining date: $e');
+        print('Error calculating leave balance: $e');
       }
+    }
+  }
+
+  Future<double> _getUsedLeaveDays() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return 0.0;
+
+    try {
+      // Get all approved AL leave requests for this user
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('leave_requests')
+          .where('userId', isEqualTo: user.uid)
+          .where('type', isEqualTo: 'AL')
+          .where('status', isEqualTo: 'Approved')
+          .get();
+
+      double totalUsedDays = 0.0;
+      
+      // Clear and rebuild leave history from Firebase
+      List<Map<String, dynamic>> newLeaveHistory = [];
+      
+      for (var doc in querySnapshot.docs) {
+        final data = doc.data();
+        final days = data['days']?.toDouble() ?? 0.0;
+        totalUsedDays += days;
+        
+        // Add to leave history
+        newLeaveHistory.add({
+          'type': 'Annual Leave',
+          'date': '${data['fromDate']} to ${data['toDate']}',
+          'days': days.toInt(),
+          'status': data['status'],
+          'requestDate': data['requestDate']?.toDate().toString().split(' ')[0] ?? 'Unknown',
+        });
+      }
+
+      // Sort history by request date (newest first)
+      newLeaveHistory.sort((a, b) {
+        try {
+          DateTime dateA = DateTime.parse(a['requestDate']);
+          DateTime dateB = DateTime.parse(b['requestDate']);
+          return dateB.compareTo(dateA);
+        } catch (e) {
+          return 0;
+        }
+      });
+
+      // Update leave history
+      setState(() {
+        leaveHistory = newLeaveHistory;
+      });
+
+      return totalUsedDays;
+    } catch (e) {
+      print('Error getting used leave days: $e');
+      return 0.0;
     }
   }
 
@@ -253,13 +339,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
   void _analyzeScheduleForLeave() {
     if (weeklySchedule != null) {
       weeklySchedule!.forEach((day, schedule) {
-        if (schedule['type'] == 'AL') {
-          leaveHistory.add({
-            'type': 'Annual Leave',
-            'date': schedule['date'],
-            'status': 'Approved'
-          });
-        } else if (schedule['type'] == 'PH') {
+        if (schedule['type'] == 'PH') {
           setState(() {
             publicHolidayDays += 1;
           });
@@ -487,13 +567,13 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
       DateTime toDate = DateTime.parse(leaveToController.text);
       int requestedDays = toDate.difference(fromDate).inDays + 1;
 
-      // Check balance
+      // Check balance based on leave type
       double availableBalance = selectedLeaveType == 'AL' ? annualLeaveBalance : publicHolidayDays.toDouble();
       
       if (requestedDays > availableBalance) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Insufficient balance. Available: $availableBalance days, Requested: $requestedDays days'),
+            content: Text('Insufficient balance. Available: ${availableBalance.toStringAsFixed(1)} days, Requested: $requestedDays days'),
             backgroundColor: Colors.red,
           ),
         );
@@ -526,6 +606,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
         // Clear form
         leaveFromController.clear();
         leaveToController.clear();
+        
+        // Refresh leave balance to show pending request
+        await _calculateLeaveBalance();
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -567,7 +650,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
                         readOnly: readonly,
                         decoration: InputDecoration(
                           border: InputBorder.none,
-                          hintText: readonly ? (controller.text.isEmpty ? 'Set once' : controller.text) : 'Enter $label',
+                          hintText: readonly ? (controller.text.isEmpty ? 'Set once' : controller.text) : 'Enter $label (YYYY-MM-DD)',
                         ),
                         style: const TextStyle(fontSize: 14),
                       ),
@@ -605,7 +688,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
           ),
           Expanded(
             child: Container(
-              height: 40,
+              height: 50,
               decoration: BoxDecoration(
                 color: isExpiring ? Colors.red.withOpacity(0.1) : Colors.white.withOpacity(0.8),
                 borderRadius: BorderRadius.circular(8),
@@ -1023,6 +1106,24 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
+                    const Text('Total Accumulated:'),
+                    Text('${totalAccumulatedLeave.toStringAsFixed(1)} days', 
+                         style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Used Leave:'),
+                    Text('${totalUsedLeave.toStringAsFixed(1)} days', 
+                         style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
                     const Text('Available Balance:'),
                     Text('${annualLeaveBalance.toStringAsFixed(1)} days', 
                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
@@ -1108,6 +1209,27 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
                 
                 const SizedBox(height: 10),
                 
+                // Available Balance Display
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Available ${selectedLeaveType} Balance:'),
+                      Text(
+                        '${selectedLeaveType == 'AL' ? annualLeaveBalance.toStringAsFixed(1) : publicHolidayDays} days',
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                const SizedBox(height: 15),
+                
                 // Date Fields
                 Row(
                   children: [
@@ -1174,7 +1296,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
                   child: const Row(
                     children: [
                       Expanded(child: Text('Type', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
-                      Expanded(child: Text('Date', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+                      Expanded(child: Text('Dates', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+                      Expanded(child: Text('Days', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
                       Expanded(child: Text('Status', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
                     ],
                   ),
@@ -1186,18 +1309,20 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> with TickerProvid
                   ),
                   child: Row(
                     children: [
-                      Expanded(child: Text(leave['type'])),
-                      Expanded(child: Text(leave['date'])),
+                      Expanded(child: Text(leave['type'], style: const TextStyle(fontSize: 12))),
+                      Expanded(child: Text(leave['date'], style: const TextStyle(fontSize: 12))),
+                      Expanded(child: Text('${leave['days']}', style: const TextStyle(fontSize: 12))),
                       Expanded(
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: leave['status'] == 'Approved' ? Colors.green : Colors.orange,
-                            borderRadius: BorderRadius.circular(10),
+                            color: leave['status'] == 'Approved' ? Colors.green : 
+                                   leave['status'] == 'Rejected' ? Colors.red : Colors.orange,
+                            borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
                             leave['status'],
-                            style: const TextStyle(color: Colors.white, fontSize: 12),
+                            style: const TextStyle(color: Colors.white, fontSize: 10),
                             textAlign: TextAlign.center,
                           ),
                         ),
