@@ -68,15 +68,15 @@ class RoleRouter extends StatelessWidget {
 
         switch (normalized) {
           case "admin":
-            return const AdminDashboard();
+            return AdminDashboard();
           case "manager":
-            return const ManagerDashboard();
+            return ManagerDashboard();
           case "ops_manager":
-            return const OpsManagerDashboard();
+            return OpsManagerDashboard();
           case "employee":
-            return const EmployeeDashboard();
+            return EmployeeDashboard();
           default:
-            return const EmployeeDashboard(); // Default fallback
+            return EmployeeDashboard(); // Default fallback
         }
       },
     );
