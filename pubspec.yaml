@@ -1,0 +1,41 @@
+name: hqsync
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Firebase core packages
+  firebase_core: ^3.0.0
+  firebase_auth: ^5.0.0
+  cloud_firestore: ^5.0.0
+  firebase_storage: ^12.1.0
+
+  # File picker for selecting documents
+  file_picker: ^10.3.8
+
+  # HTTP for calling Cloud Function (expiry AI)
+  http: ^1.2.1
+
+  # URL launcher for "View Document"
+  url_launcher: ^6.2.5
+
+  # Location tracking for attendance
+  geolocator: ^10.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

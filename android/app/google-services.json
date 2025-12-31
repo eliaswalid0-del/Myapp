@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "442107364432",
+    "project_id": "hqsync-139e9",
+    "storage_bucket": "hqsync-139e9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:442107364432:android:010e71a975a028d650fd55",
+        "android_client_info": {
+          "package_name": "com.example.hqsync"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBKPEQvSQvqCn3LdQx8rXgR3qYR1qN_UBE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
